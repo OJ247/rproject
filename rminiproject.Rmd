@@ -1,0 +1,322 @@
+---
+title: "MSB7102 Mini-project, semester I, 2021"
+author: "OKWIR JULIUS"
+date: "Student No: 2000720621    Reg No: 2020/HD07/20621U"
+output:
+    pdf_document:
+      number_sections: true
+fontsize: 12pt
+---
+
+\newpage
+\tableofcontents
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = "/home/ace/julius/juliusmsbt/bioconductor_r/rproject")
+```
+
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+```
+
+# Import data and provide descriptive summaries and statistics
+## Load packages to be used and set the plot theme
+```{r, cache = TRUE}
+library(tidyverse)
+library(phyloseq)
+library(DESeq2)
+library(ggthemes)
+theme_set(theme_light())
+```
+
+## Import the data
+The datasets were imported using the read_csv for the csv file and read_tsv for the text file. The first row of the text file was skipped using the skip argument.
+```{r, cache = TRUE}
+# subject data
+sample_data <- read_csv("diabimmune_16s_t1d_metadata.csv")
+
+# otu abundance and taxonomy data
+otu_taxonomy_data <- read_tsv("diabimmune_t1d_16s_otu_table.txt", skip = 1)
+```
+
+## Descriptive summaries of the subject data
+**Dimensions**
+```{r, cache = TRUE}
+dim(sample_data)
+```
+
+**Data structure**
+```{r, cache=TRUE}
+str(sample_data)
+```
+
+**Data summary**
+```{r, cache=TRUE}
+summary(sample_data)
+```
+
+**Number of subjects**
+```{r, cache=TRUE}
+length(unique(sample_data$Subject_ID))
+```
+
+\newpage
+
+## Exploring subject data
+**Head and Tail**
+```{r, cache=TRUE}
+head(sample_data); tail(sample_data)
+```
+
+**Number of samples collected by subject**.\
+The plot indicates that frequency of sample collection from the subjects was not uniform.
+```{r, cache = TRUE}
+ggplot(sample_data, aes(Subject_ID)) +
+  geom_bar(fill = "cyan") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Number of samples collected from each subject", x = "Subject ID", y = "Number of samples")
+```
+
+**Number of samples from cases and controls**.\
+The frequency of sample collection from the subjects that served as controls was higher than that from those that served as cases
+```{r, cache=TRUE}
+ggplot(sample_data, aes(Case_Control)) +
+  geom_bar(fill = "yellow3", width = 0.2) +
+  labs(title = "Number of samples collected from Cases and Controls",
+       x = "", y = "Number of samples")
+```
+  
+**Number of samples collected by gender**.\
+Slightly more samples were obtained from the female subjects than males.
+```{r, cache=TRUE}
+ggplot(sample_data, aes(Gender)) +
+  geom_bar(fill = "orange", width = 0.2) +
+  labs(title = "Number of samples collected by Gender",
+       x = "Gender", y = "Number of samples")
+```
+
+**Number of samples by delivery route**.\
+The frequency of samples obtained from subjects born via the vaginal canal was higher than those from subjects born via cesarian section.
+```{r, cache=TRUE}
+ggplot(sample_data, aes(Delivery_Route)) +
+  geom_bar(fill = "green4", width = 0.2) +
+  labs(title = "Number of samples collected by Delivery Route",
+       x = "Delivery Route", y = "Number of samples")
+```
+
+## Chi-squared Test for Independence
+Chi-squared test for Independence was used to examine whether there is significant association between disease status and other variables. Contingency tables were generated from these variables and used to perform the tests.\
+The hypotheses were set as follows:\
+Null hypothesis(H0): The two categorical variables are independent and there is no association between them.\ 
+Alternative hypothesis(H1):The two categorical variables are dependent and there is an association between them.\
+
+**Disease status and Gender**\
+```{r, cache=TRUE}
+chisq.test(table(sample_data$Case_Control, sample_data$Gender))
+```
+The p-value = `0.5796` and it is greater than `0.05`. The null hypothesis was accepted. The disease status and Gender are independent and there is no significant relationship between them.\
+
+**Disease status and Delivery mode**\
+```{r, cache=TRUE}
+chisq.test(table(sample_data$Case_Control, sample_data$Delivery_Route))
+```
+The p-value = `3.949e-09` and is less than `0.05`. The null hypothesis was rejected in favor of the alternative hypothesis. The disease status and Delivery mode are dependent. Therefore, there is a significant relationship between them.\
+
+## Student's t.test for independence
+**Disease status vs age**\
+A students t-test was performed to check for association between disease status and age.
+```{r, cache=TRUE}
+t.test(table(sample_data$Case_Control, sample_data$Age_at_Collection))
+```
+The p-value < 2.2e-16. The null hypothesis was rejected in favor of the alternative hypothesis. The disease status Age are dependent. Therefore, there is a significant relationship between them.
+
+# Create a phyloseq object
+**Examine the otu_taxonomy_data**\
+The `otu_taxonomy_data` contains both the OTU abundance data and the taxonomy data. The data was split up to create two data sets. The first containing the OTU abundance and the second containing the taxonomy information.
+```{r, cache=TRUE}
+# dimensions
+dim(otu_taxonomy_data)
+```
+
+## Extract OTU abundance data
+The OTU abundance data ranges from column 1 to column 778 of the `otu_taxonomy_data`.
+```{r, cache=TRUE}
+# select only the otu abundance data
+otu_data <- select(otu_taxonomy_data, 1:778)
+
+# convert OTU IDs to row names
+otu_data <- otu_data %>% column_to_rownames("#OTU ID")
+
+# convert otu abundance data into a matrix
+otu_data <- as.matrix(otu_data)
+
+# class and dimensions
+class(otu_data); dim(otu_data)
+```
+
+## Extract taxonomy data 
+The taxonomy data is present in the last column(779) of the `otu_taxonomy_data`.
+```{r,cache=TRUE}
+# select the taxonomy data 
+taxonomy_data <- select(otu_taxonomy_data, 779)
+
+# create a vector of taxa names
+taxa_names <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+
+# place all values under respective taxa names
+taxonomy_data <- separate(taxonomy_data, col = "ConsensusLineage", into = taxa_names, sep = ";")
+
+# remove letters and underscores
+taxonomy_data <- apply(taxonomy_data, 2, str_remove_all, "[a-z]__") 
+
+# remove white spaces
+taxonomy_data <- apply(taxonomy_data, 2, str_remove_all, " ") 
+
+# create a tibble
+taxonomy_data <- as_tibble(taxonomy_data)
+
+# assign OTU row names to taxonomy data
+rownames(taxonomy_data) <- rownames(otu_data)
+
+# convert into a matrix
+taxonomy_data <- as.matrix(taxonomy_data)
+
+# class and head of the matrix
+class(taxonomy_data); head(taxonomy_data)
+```
+
+\newpage
+
+## Set Sample_ID as rownames for the sample data
+```{r, cache=TRUE}
+sample_data <- sample_data %>% 
+  column_to_rownames("Sample_ID")
+```
+
+## Create OTU table, taxonomy table, and sample table 
+```{r,cache=TRUE}
+# otu table
+OTU <- otu_table(otu_data, taxa_are_rows = TRUE)
+
+# taxonomy table
+TAX <- tax_table(taxonomy_data)
+
+# sample table
+samples <- sample_data(sample_data)
+```
+
+## Merge OTU table, taxonomy table, and sample table to create phyloseq object
+```{r, cache=TRUE}
+diabimmune <- phyloseq(OTU, TAX, samples)
+```
+
+## Explore the phyloseq object
+```{r, cache=TRUE}
+# phyloseq object
+diabimmune
+
+# class 
+class(diabimmune)
+
+# rank names
+rank_names(diabimmune)
+
+# variables
+sample_variables(diabimmune)
+```
+
+# Generate Alpha diversity plots and Ordination plots
+## Alpha diversity plots
+The Alpha diversity refers to the diversity within a particular area or ecosystem and is usually expressed by the number of species in that ecosystem. The `Observed` alpha diversity measure was used to examine the species richness by delivery route, gender and disease status.
+
+### Observed species richness by Delivery route
+Generally there is a higher species richness observed in samples obtained from subjects born via the vaginal canal than those born via cesarian section. The species richness from these samples also increased with increase in the age of the study subjects.
+```{r, cache=TRUE}
+plot_richness(diabimmune, measures = "Observed", 
+              x = "Age_at_Collection", color = "Delivery_Route") +
+       facet_grid(~Delivery_Route) +
+       labs(title = "Observed species richness by Delivery route",
+       x = "Age at collection",
+       y = "Alpha diversity")
+```
+
+### Observed species richness by Gender 
+No significant difference was observed in species richness of samples obtained from the male and female subjects. The observed species richness also increased in both males and females with increase in age.
+```{r, cache=TRUE}
+plot_richness(diabimmune, measures = "Observed", 
+              x = "Age_at_Collection", color = "Gender") +
+       facet_grid(~Gender) +
+       labs(title = "Observed species richness by Gender",
+       x = "Age at collection",
+       y = "Alpha diversity")
+```
+
+### Observed species richness by disease status
+There was a similar number of observed species richness of samples obtained from the cases and controls. The observed species richness also increased in both cases and controls with increase in age.
+```{r, cache=TRUE}
+plot_richness(diabimmune, measures = "Observed", 
+              x = "Age_at_Collection", color = "Case_Control") +
+       facet_grid(~Case_Control) +
+       labs(title = "Observed species richness by Disease status",
+       x = "Age at collection",
+       y = "Alpha diversity")
+```
+
+## ordination plots
+OTUs were plotted to examine any observed patterns by delivery mode, gender and disease status.
+```{r, cache=TRUE}
+# ordinate the data
+ord <- ordinate(diabimmune, "NMDS", "bray")
+```
+
+### Delivery mode
+```{r, cache=TRUE}
+plot_ordination(diabimmune, ord, type="samples",           color="Case_Control") + 
+  geom_point(size = 2) 
+```
+
+### Gender
+```{r, cache=TRUE}
+plot_ordination(diabimmune, ord, type="samples", color="Gender") + 
+  geom_point(size = 2) 
+```
+
+### Disease status
+```{r, cache=TRUE}
+plot_ordination(diabimmune, ord, type="samples", color="Case_Control") + 
+  geom_point(size = 2) 
+
+```
+
+# Differential Abundance using DESeq2
+The phyloseq object was converted to DEseqDataset class using the Case_Control variable as the study design factor. This was then followed by the geometricMeans and estimation of size factors. The differential expression analysis was then done using the DESeq function
+```{r,cache=TRUE}
+# Convert data from class phyloseq to DESeq2's DESeqDataSet class
+deseq <- phyloseq_to_deseq2(diabimmune, ~ Case_Control)
+
+# function to calculate the geometric mean
+gm_mean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+# geometricMean
+geoMeans <- apply(counts(deseq), 1, gm_mean)
+
+# size factor estimation
+deseq <- estimateSizeFactors(deseq, geoMeans = geoMeans)
+
+# perform the differential expression analysis
+deseq <-  DESeq(deseq, fitType="local")
+```
+
+## Construct the differential results table
+```{r,cache=TRUE}
+# test results table
+res <- results(deseq, cooksCutoff = FALSE)
+
+res
+```
+
